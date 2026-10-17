@@ -1,0 +1,104 @@
+<!DOCTYPE html><html><head><meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=theme-color content=#05080a><title>EMPIRE HUD</title><style>
+:root{--teal:#2dd4bf;--amber:#e09a3c;--bg:#05080a;--card:#0a0f12;--dim:#5b6b68;--txt:#c9f2ea}
+*{box-sizing:border-box}body{background:var(--bg);color:var(--txt);font-family:ui-monospace,Menlo,monospace;margin:0;padding:12px;font-size:14px}
+header{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #134e4a;padding-bottom:10px;margin-bottom:12px}
+h1{color:var(--teal);letter-spacing:5px;font-size:20px;margin:0}
+#upd{color:var(--dim);font-size:11px}
+#refresh{background:#0d3b3e;border:1px solid var(--teal);color:var(--teal);border-radius:6px;padding:6px 12px;font-family:inherit}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid #134e4a;border-radius:10px;padding:14px}
+.card h3{margin:0 0 10px;color:var(--amber);font-size:12px;letter-spacing:3px}
+.big{font-size:30px;color:var(--teal);font-variant-numeric:tabular-nums}
+.row{display:flex;justify-content:space-between;padding:4px 0;border-top:1px dashed #123;font-variant-numeric:tabular-nums}
+.row:first-of-type{border-top:none}
+.k{color:var(--dim)}.v{color:var(--txt)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.ok{background:#2dd4bf}.warn{background:#e09a3c}.bad{background:#ef4444}.mute{background:#5b6b68}
+.err{color:#ef4444;font-size:12px}.stale{color:var(--amber);font-size:11px}
+footer{color:var(--dim);font-size:11px;text-align:center;margin-top:16px}
+a{color:var(--teal)}
+#login{position:fixed;inset:0;background:#05080a;display:flex;align-items:center;justify-content:center;z-index:10}
+#login form{border:1px solid #134e4a;padding:28px;border-radius:10px;background:#0a0f12;text-align:center}
+#login input{background:#05080a;border:1px solid #2dd4bf;color:#c9f2ea;padding:10px;font-size:16px;border-radius:6px;width:220px;font-family:monospace}
+#login button{background:#0d3b3e;border:1px solid #2dd4bf;color:#2dd4bf;padding:10px 22px;font-size:15px;border-radius:6px;margin-top:12px;font-family:monospace}
+#login h2{color:#2dd4bf;letter-spacing:4px}
+#locknote{color:var(--dim);font-size:11px;margin-top:10px;max-width:240px}
+</style></head><body>
+<div id=login><form id=lf>
+<h2>EMPIRE HUD</h2><p style="color:#5b6b68">passphrase + authenticator code</p>
+<input type=password id=pw autocomplete=off placeholder="passphrase"><br>
+<input id=code inputmode=numeric pattern="[0-9]*" autocomplete=off placeholder="6-digit code" style="margin-top:8px"><br>
+<button>UNLOCK</button>
+<div id=locknote>data is end-to-end encrypted — this page never sees your keys leave the device</div>
+<div id=lerr class=err style="margin-top:8px"></div>
+</form></div>
+<header><h1>EMPIRE HUD</h1><div><span id=upd>…</span> <button id=refresh>REFRESH</button></div></header>
+<div class=grid id=grid></div>
+<footer>encrypted snapshots · passphrase + 2FA · <span id=ft></span></footer>
+<script>
+const $=id=>document.getElementById(id);
+const enc=new TextEncoder(), dec=new TextDecoder();
+const b64d=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+let KEY=null, PW="", CODE="";
+function dot(s){return s=='active'?'<span class="dot ok"></span>':s=='pending'?'<span class="dot warn"></span>':s=='suspended'||s=='flagged'?'<span class="dot bad"></span>':'<span class="dot mute"></span>'}
+function panel(title,inner){return `<div class=card><h3>${title}</h3>${inner}</div>`}
+function rows(obj){return Object.entries(obj).map(([k,v])=>`<div class=row><span class=k>${k}</span><span class=v>${v}</span></div>`).join('')}
+function block(name,b,fmt){
+  if(!b.ok){const s=b.stale?`<div class=stale>stale data (refresh failed)</div>`+fmt(b.stale):'';
+    return panel(name,`<div class=err>${b.error||'unavailable'}</div>`+s);}
+  return panel(name,fmt(b.data));
+}
+function render(d){
+  $('upd').textContent='snapshot '+d.ts+' · updated '+d.data.updated_at;
+  let h='';
+  h+=block('TRAFFIC',d.data.traffic,t=>Object.entries(t).map(([s,v])=>
+    `<div class=row><span class=k>${s}</span><span class=v><span class=big style="font-size:20px">${v.sessions_today}</span> today · ${v.sessions_7d} /7d</span></div>`).join(''));
+  h+=block('MONEY',d.data.money,m=>rows({'Travelpayouts balance':'$'+m.balance_usd,'actions on record':m.actions_count,'total profit':'$'+m.total_profit_usd}));
+  h+=block('MOTHFALL',d.data.mothfall,m=>rows({'version':'v'+m.version,'latest commit':m.commit_sha+' — '+m.commit_msg,'committed':m.commit_date}));
+  h+=block('OUTREACH',d.data.outreach,o=>rows({'sent today':o.sent_today,'sent last 7d':o.sent_7d,'replies pending':o.replies_pending,'total contacted':o.total_contacted}));
+  if(d.data.social.ok){h+=panel('SOCIAL / FDD',d.data.social.data.map(a=>`<div class=row><span class=k>${dot(a[2])}${a[0]} ${a[1]}</span><span class=v>${a[2]}${a[3]?' · '+a[3]:''}</span></div>`).join(''));}
+  h+=block('CRON HEALTH',d.data.crons,c=>c.filter(j=>j.enabled).slice(0,14).map(j=>`<div class=row><span class=k>${j.title}</span><span class=v>${j.next}</span></div>`).join(''));
+  $('grid').innerHTML=h;
+}
+async function deriveKey(pw,code,salt,iter){
+  const km=await crypto.subtle.importKey('raw',enc.encode(pw+code),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:iter,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
+}
+async function load(){
+  if(!KEY){$('upd').textContent='locked';return;}
+  $('upd').textContent='updating…';
+  try{
+    const blob=await (await fetch('hud-data.json',{cache:'no-store'})).json();
+    let done=false;
+    for(const c of blob.cts){
+      try{
+        const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(c.n)},KEY,b64d(c.c));
+        const d=JSON.parse(dec.decode(pt));
+        d.ts=new Date(d.ts*1000).toLocaleTimeString();
+        render(d);done=true;break;
+      }catch(e){}
+    }
+    if(!done)$('upd').textContent='decrypt failed — snapshot may be newer than this key';
+  }catch(e){$('upd').textContent='fetch failed: '+e;}
+}
+$('lf').onsubmit=async ev=>{
+  ev.preventDefault();
+  $('lerr').textContent='unlocking…';
+  try{
+    const blob=await (await fetch('hud-data.json',{cache:'no-store'})).json();
+    const salt=b64d(blob.salt), pw=$('pw').value, code=$('code').value.trim();
+    const key=await deriveKey(pw,code,salt,blob.iter);
+    let ok=false;
+    for(const c of blob.cts){
+      try{await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(c.n)},key,b64d(c.c));ok=true;break;}
+      catch(e){}
+    }
+    if(!ok){$('lerr').textContent='wrong passphrase or code — try again';return;}
+    KEY=key;PW=pw;CODE=code;
+    $('login').style.display='none';
+    load();setInterval(load,180000);
+  }catch(e){$('lerr').textContent='could not load snapshot: '+e;}
+};
+$('refresh').onclick=load;
+</script></body></html>
